@@ -1,0 +1,47 @@
+# Copy to .github/workflows/dast.yml in the app repo and replace the <...> values.
+name: dast
+
+# Weekly authenticated DAST scan of staging with HawkScan (scoville/dast-action).
+# Scan tuning (excluded assets, seeded routes, auth) lives in stackhawk.yml.
+on:
+  schedule:
+    # 03:00 JST Monday (18:00 UTC Sunday)
+    - cron: '0 18 * * 0'
+  workflow_dispatch:
+    inputs:
+      host:
+        description: 'Tenant host to scan (bare hostname, no scheme)'
+        default: '<stg.example.jp>'
+      waf_bypass:
+        description: 'Send the WAF bypass header so payloads reach the app. Off = scan as an outsider sees it.'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  # Only needed when the WAF key is read from SSM (waf_key_ssm_parameter).
+  id-token: write
+
+concurrency:
+  # One scan per app/env at a time; a queued run would clash on the platform.
+  group: dast-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    uses: scoville/dast-action/.github/workflows/dast.yml@v1
+    # Org secrets read by fixed name: HAWK_API_KEY, DRATA_CCT_API_KEY, SLACK_BOT_TOKEN.
+    secrets: inherit
+    with:
+      app_name: <app>
+      host: ${{ inputs.host || '<stg.example.jp>' }}
+      waf_bypass: ${{ github.event_name != 'workflow_dispatch' || inputs.waf_bypass }}
+      # WAF key: either a repo secret...
+      # waf_scan_key_secret: DAST_SCAN_KEY
+      # ...or SSM via the OIDC role in the AWS_ROLE_TO_ASSUME_STG secret.
+      waf_key_ssm_parameter: /<app>-stg/dast/scan-key
+      stackhawk_app_id_secret: STACKHAWK_APP_ID
+      scan_username_secret: E2E_USERNAME
+      scan_password_secret: E2E_PASSWORD
+      client_slug_secret: E2E_CLIENT_SLUG
+      slack_channel_id: ${{ vars.DAST_SLACK_CHANNEL_ID }}

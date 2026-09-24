@@ -1,0 +1,77 @@
+# HawkScan config template for a nomanbase-style Rails/Devise app.
+# Copy to stackhawk.yml at the app repo root and replace the <...> values.
+# Every ${VAR} below is set by scoville/dast-action at scan time.
+app:
+  applicationId: ${APP_ID}
+  env: ${APP_ENV:Staging}
+  # Tenant subdomain — all real app routes live here, not on the apex host
+  host: ${APP_HOST:https://<stg.example.jp>}
+
+  authentication:
+    usernamePassword:
+      type: FORM
+      # The action appends ?client_slug=<tenant> when client_slug_secret is set.
+      loginPath: ${LOGIN_PATH:/users/sign_in}
+      usernameField: user[username]
+      passwordField: user[password]
+      scanUsername: ${SCAN_USERNAME}
+      scanPassword: ${SCAN_PASSWORD}
+    cookieAuthorization:
+      cookieNames:
+        - <_stg_app_session>
+    loggedInIndicator: ".*app--sidebar--logout-component.*"
+    loggedOutIndicator: ".*/users/sign_in.*"
+    testPath:
+      # Must return 200 with the session cookie and 401 without — verify by hand
+      path: /api/web/refresh_csrf_token
+      success: ".*200.*"
+
+  # NOTE: these are REGEXES, not globs.
+  excludePaths:
+    # Session-killers — must stay excluded or the scan logs itself out
+    - /logout
+    - /users/sign_out
+    # Static assets: excluding them cuts scan time and stops findings being
+    # drowned in per-file header alerts.
+    - /assets/.*
+    - .*\.(js|css|map|png|jpe?g|gif|svg|ico|woff2?|ttf|eot|webmanifest)$
+    - /robots\.txt
+    - /sitemap\.xml
+
+hawk:
+  spider:
+    base: true
+    # Turbo/Stimulus renders navigation client-side — without the ajax spider
+    # the crawl only finds /assets and never enters the app.
+    ajax: true
+    maxDurationMinutes: 15
+    # Explicit seeds for the authenticated HTML surface — take them from
+    # config/routes.rb of the app being scanned.
+    seedPaths:
+      - /
+      - /contacts
+      - /meetings
+      - /settings
+      - /users
+      - /api/web/refresh_csrf_token
+      # Unauthenticated surface
+      - /.well-known/openid-configuration
+      - /oauth/authorize
+      - /privacy_policy
+
+# Lets the scan through the staging WAF's managed rule groups so payloads reach
+# the app instead of being 403'd at CloudFront. The action always sets
+# DAST_SCAN_KEY; when the bypass is off it substitutes a value that cannot match
+# the WAF rule, so the scan runs WAF-on. It must never be empty -- a set-but-empty
+# var does not fall back to the default below and the config then fails
+# validation with "Missing property replacement".
+hawkAddOn:
+  replacer:
+    rules:
+      - matchString: x-dast-scan-key
+        replacement: ${DAST_SCAN_KEY:}
+        replaceOnly: false
+
+tags:
+  - name: _STACKHAWK_AGENT
+    value: ${HAWK_AGENT:none}

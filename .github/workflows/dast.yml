@@ -1,0 +1,343 @@
+name: dast
+
+# Reusable authenticated DAST scan with HawkScan. Callers keep the trigger,
+# permissions, concurrency and their own stackhawk.yml; see README.md.
+#
+# Secrets: callers pass `secrets: inherit`. Org-wide secrets are read by fixed
+# name (HAWK_API_KEY, DRATA_CCT_API_KEY, SLACK_BOT_TOKEN); repo-specific ones are
+# named by the caller through the *_secret inputs and looked up dynamically.
+on:
+  workflow_call:
+    inputs:
+      app_name:
+        description: 'Short app name (e.g. noman). Keys the Drata record as <app_name>-dast'
+        type: string
+        required: true
+      host:
+        description: 'Host to scan (bare hostname, no scheme)'
+        type: string
+        required: true
+      app_env:
+        description: 'StackHawk environment name'
+        type: string
+        default: Staging
+      config_file:
+        description: 'HawkScan config in the caller repo'
+        type: string
+        default: stackhawk.yml
+      login_path:
+        description: 'Sign-in path; ?client_slug=<value> is appended when client_slug_secret resolves'
+        type: string
+        default: /users/sign_in
+      stackhawk_app_id_secret:
+        description: 'Name of the secret holding the StackHawk application id'
+        type: string
+        required: true
+      scan_username_secret:
+        description: 'Name of the secret holding the scan user login'
+        type: string
+        required: true
+      scan_password_secret:
+        description: 'Name of the secret holding the scan user password'
+        type: string
+        required: true
+      client_slug_secret:
+        description: 'Name of the secret holding the tenant client_slug for the sign-in page'
+        type: string
+        default: ''
+      waf_bypass:
+        description: 'Send the WAF bypass header so payloads reach the app. Off = scan as an outsider sees it.'
+        type: boolean
+        default: true
+      waf_scan_key_secret:
+        description: 'Name of the secret holding the WAF bypass key. Takes precedence over SSM'
+        type: string
+        default: ''
+      waf_key_ssm_parameter:
+        description: 'SSM SecureString holding the WAF bypass key, read when no key secret resolves'
+        type: string
+        default: ''
+      aws_role_secret:
+        description: 'Name of the secret holding the IAM role assumed to read the SSM key'
+        type: string
+        default: AWS_ROLE_TO_ASSUME_STG
+      aws_region:
+        description: 'Region of the SSM parameter'
+        type: string
+        default: ap-northeast-1
+      drata_connection_id:
+        description: 'Drata custom connection id'
+        type: string
+        default: '20'
+      drata_resource_id:
+        description: 'Drata custom connection resource id'
+        type: string
+        default: '1'
+      slack_channel_id:
+        description: 'Slack channel for high-risk alerts; empty disables Slack'
+        type: string
+        default: ''
+      artifact_retention_days:
+        description: 'Days to keep the dast-findings artifact'
+        type: number
+        default: 90
+      timeout_minutes:
+        description: 'Job timeout'
+        type: number
+        default: 60
+    outputs:
+      high:
+        description: 'High-risk finding count (empty if the alert fetch failed)'
+        value: ${{ jobs.scan.outputs.high }}
+      medium:
+        description: 'Medium-risk finding count'
+        value: ${{ jobs.scan.outputs.medium }}
+      low:
+        description: 'Low-risk finding count'
+        value: ${{ jobs.scan.outputs.low }}
+
+# No permissions block on purpose: a called workflow can only narrow the
+# caller's grant, so asking for id-token here would break callers that use the
+# key secret instead of SSM. Callers grant contents: read (+ id-token: write for SSM).
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    env:
+      # Step `if:` cannot read secrets, so expose only whether the token is set.
+      HAS_SLACK_TOKEN: ${{ secrets.SLACK_BOT_TOKEN != '' }}
+    outputs:
+      high: ${{ steps.report.outputs.high }}
+      medium: ${{ steps.report.outputs.medium }}
+      low: ${{ steps.report.outputs.low }}
+    steps:
+      # Checks out the caller repo, which holds stackhawk.yml.
+      - uses: actions/checkout@v7
+
+      # Picks where the WAF bypass key comes from: a repo secret if one resolves,
+      # otherwise SSM if a parameter is configured, otherwise scan WAF-on.
+      - name: Resolve WAF bypass key source
+        id: wafsrc
+        if: inputs.waf_bypass
+        env:
+          DIRECT_KEY: ${{ secrets[inputs.waf_scan_key_secret] }}
+          SSM_PARAM: ${{ inputs.waf_key_ssm_parameter }}
+        run: |
+          if [ -n "$DIRECT_KEY" ]; then
+            echo "source=direct" >> "$GITHUB_OUTPUT"
+          elif [ -n "$SSM_PARAM" ]; then
+            echo "source=ssm" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::waf_bypass is on but no key secret or SSM parameter is configured; scanning WAF-on."
+            echo "source=none" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        if: steps.wafsrc.outputs.source == 'ssm'
+        with:
+          role-to-assume: ${{ secrets[inputs.aws_role_secret] }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Read WAF bypass key
+        id: waf
+        if: steps.wafsrc.outputs.source == 'ssm'
+        env:
+          SSM_PARAM: ${{ inputs.waf_key_ssm_parameter }}
+        run: |
+          KEY=$(aws ssm get-parameter \
+            --name "$SSM_PARAM" \
+            --with-decryption \
+            --query 'Parameter.Value' --output text)
+          echo "::add-mask::$KEY"
+          echo "key=$KEY" >> "$GITHUB_OUTPUT"
+
+      - name: Install hawk
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          MANIFEST=$(curl -fsSL https://download.stackhawk.com/hawkdocs/hawk.manifest.json)
+          URL=$(jq -r '.latest.assets[] | select(.asset.group=="linux-x64") | .url' <<<"$MANIFEST")
+          SHA=$(jq -r '.latest.assets[] | select(.asset.group=="linux-x64") | .sha256' <<<"$MANIFEST")
+          curl -fsSL -o hawk "$URL"
+          echo "$SHA  hawk" | sha256sum -c -
+          sudo install -m 0755 hawk /usr/local/bin/hawk
+          hawk version
+
+      - name: Scan
+        id: scan
+        env:
+          API_KEY: ${{ secrets.HAWK_API_KEY }}
+          APP_ID: ${{ secrets[inputs.stackhawk_app_id_secret] }}
+          APP_ENV: ${{ inputs.app_env }}
+          APP_HOST: https://${{ inputs.host }}
+          LOGIN_PATH_BASE: ${{ inputs.login_path }}
+          CLIENT_SLUG: ${{ secrets[inputs.client_slug_secret] }}
+          SCAN_USERNAME: ${{ secrets[inputs.scan_username_secret] }}
+          SCAN_PASSWORD: ${{ secrets[inputs.scan_password_secret] }}
+          # Never empty: a set-but-empty var does not fall back to the
+          # stackhawk.yml default and the config then fails validation. The
+          # placeholder cannot match the WAF rule, so the scan runs WAF-on.
+          DAST_SCAN_KEY: ${{ (steps.wafsrc.outputs.source == 'direct' && secrets[inputs.waf_scan_key_secret]) || steps.waf.outputs.key || 'waf-bypass-disabled' }}
+          HAWK_AGENT: github-actions
+          COMMIT_SHA: ${{ github.sha }}
+          BRANCH_NAME: ${{ github.ref_name }}
+          CONFIG_FILE: ${{ inputs.config_file }}
+        # Exit 42 means findings crossed the threshold — surface it as a failure,
+        # but let any other non-zero (config/auth/unreachable) fail loudly too.
+        run: |
+          LOGIN_PATH=$LOGIN_PATH_BASE
+          if [ -n "$CLIENT_SLUG" ]; then
+            case "$LOGIN_PATH" in *\?*) SEP='&' ;; *) SEP='?' ;; esac
+            LOGIN_PATH="$LOGIN_PATH${SEP}client_slug=$CLIENT_SLUG"
+          fi
+          export LOGIN_PATH
+          hawk --no-color scan "$CONFIG_FILE"
+
+      # Our StackHawk tier does not support the /reports endpoint, so walk the
+      # per-scan alert endpoints instead.
+      - name: Fetch scan alerts
+        id: report
+        if: always() && steps.scan.conclusion != 'skipped'
+        env:
+          HAWK_API_KEY: ${{ secrets.HAWK_API_KEY }}
+          APP_ID: ${{ secrets[inputs.stackhawk_app_id_secret] }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/dast"
+          API=https://api.stackhawk.com/api/v1
+          JWT=$(curl -fsS -H "X-ApiKey: $HAWK_API_KEY" "$API/auth/login" | jq -r .token)
+          echo "::add-mask::$JWT"
+          AUTH="Authorization: Bearer $JWT"
+          ORG=$(curl -fsS -H "$AUTH" "$API/user" | jq -r '.user.external.organizations[0].organization.id')
+          SCAN=$(curl -fsS -H "$AUTH" "$API/scan/$ORG?appIds=$APP_ID&pageSize=1&sortDir=desc" \
+            | jq -r '.applicationScanResults[0].scan.id')
+          mkdir -p "$OUT"
+          curl -fsS -H "$AUTH" "$API/scan/$SCAN/alerts?pageSize=100" -o "$OUT/alerts.json"
+          # alerts.json counts the offending paths but does not name them, so
+          # pull the uri list per alert. pageSize caps at 100 on these routes.
+          jq -r '.applicationScanResults[0].applicationAlerts[]?.pluginId' "$OUT/alerts.json" \
+            | while read -r id; do
+                curl -fsS -H "$AUTH" "$API/scan/$SCAN/alert/$id?pageSize=100" -o "$OUT/alert-$id.json"
+              done
+          # shellcheck disable=SC2016 # $s is a jq variable
+          COUNT='[.applicationScanResults[0].applicationAlerts[]? | select(.severity == $s)] | length'
+          HIGH=$(jq --arg s High "$COUNT" "$OUT/alerts.json")
+          MEDIUM=$(jq --arg s Medium "$COUNT" "$OUT/alerts.json")
+          LOW=$(jq --arg s Low "$COUNT" "$OUT/alerts.json")
+          {
+            echo "high=$HIGH"
+            echo "medium=$MEDIUM"
+            echo "low=$LOW"
+          } >> "$GITHUB_OUTPUT"
+
+      # Renders on the run page, so the findings are readable without
+      # downloading the artifact or holding a StackHawk seat. Paths collapse
+      # behind <details> to keep the table visible on a bad week.
+      - name: Write run summary
+        if: always() && steps.report.conclusion == 'success'
+        env:
+          ORDER: '["High","Medium","Low"]'
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/dast"
+          {
+            echo "## DAST findings"
+            echo
+            if [ "$(jq '.applicationScanResults[0].applicationAlerts | length' "$OUT/alerts.json")" -eq 0 ]; then
+              echo "No findings."
+            else
+              echo "| Severity | Finding | Paths |"
+              echo "| --- | --- | ---: |"
+              jq -r --argjson o "$ORDER" '.applicationScanResults[0].applicationAlerts
+                | sort_by(.severity as $s | $o | index($s) // 3)
+                | .[] | "| \(.severity) | \(.name) | \(.uriCount) |"' "$OUT/alerts.json"
+              echo
+              # shellcheck disable=SC2016 # backticks are markdown, not shell
+              jq -rs --argjson o "$ORDER" 'sort_by(.alert.severity as $s | $o | index($s) // 3)
+                | .[]
+                | "<details><summary>\(.alert.severity) — \(.alert.name) (\(.totalCount) paths)</summary>", "",
+                  (.applicationScanAlertUris[]
+                    | "- `\(.requestMethod) \(if .uri == "" then "(no path)" else .uri end)`"),
+                  "</details>", ""' "$OUT"/alert-*.json
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Feeds the "HawkScan DAST" custom connection in Drata, which backs the
+      # DCF-18 (Vulnerability Scans) monitoring test. One record per app, keyed
+      # on id, so each run updates in place rather than accumulating history --
+      # the artifact below is the historical record.
+      - name: Report to Drata
+        if: always() && steps.report.conclusion == 'success'
+        # Evidence reporting must not change the scan's own verdict, same as the
+        # Slack step below.
+        continue-on-error: true
+        env:
+          DRATA_API_KEY: ${{ secrets.DRATA_CCT_API_KEY }}
+          APP: ${{ inputs.app_name }}
+          HOST: ${{ inputs.host }}
+          HIGH: ${{ steps.report.outputs.high }}
+          MEDIUM: ${{ steps.report.outputs.medium }}
+          LOW: ${{ steps.report.outputs.low }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CONNECTION_ID: ${{ inputs.drata_connection_id }}
+          RESOURCE_ID: ${{ inputs.drata_resource_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DRATA_API_KEY" ]; then
+            echo "::notice::DRATA_CCT_API_KEY is not available to this repo; skipping Drata."
+            exit 0
+          fi
+          OUT="$RUNNER_TEMP/dast"
+          # Built with jq rather than a heredoc so the counts land as JSON
+          # numbers -- the resource schema types them as `number`, and a
+          # quoted "0" is silently rejected by the custom test's conditions.
+          jq -n \
+            --arg id "$APP-dast" \
+            --arg app "$APP" \
+            --arg host "$HOST" \
+            --arg scanDate "$(date -u +%Y-%m-%d)" \
+            --argjson highCount "$HIGH" \
+            --argjson mediumCount "$MEDIUM" \
+            --argjson lowCount "$LOW" \
+            --arg runUrl "$RUN_URL" \
+            '{data: {id: $id, app: $app, host: $host, scanDate: $scanDate,
+                     highCount: $highCount, mediumCount: $mediumCount,
+                     lowCount: $lowCount, runUrl: $runUrl}}' \
+            > "$OUT/drata.json"
+          curl -fsS -X POST \
+            "https://public-api.apac.drata.com/public/custom-connections/$CONNECTION_ID/resources/$RESOURCE_ID/records" \
+            -H "Authorization: Bearer $DRATA_API_KEY" \
+            -H "Content-Type: application/json" \
+            --data @"$OUT/drata.json"
+
+      - name: Upload findings
+        if: always() && steps.report.conclusion == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: dast-findings
+          path: ${{ runner.temp }}/dast/
+          retention-days: ${{ inputs.artifact_retention_days }}
+
+      # Only high-risk findings are worth interrupting the channel for; the
+      # artifact covers everything else. An empty count means the fetch failed.
+      - name: Slack notification
+        if: >-
+          always()
+          && steps.report.outputs.high != '' && steps.report.outputs.high != '0'
+          && inputs.slack_channel_id != '' && env.HAS_SLACK_TOKEN == 'true'
+        # A Slack outage must not change the scan's reported outcome; the step's
+        # own red marker (with errors: true) still surfaces a misconfig.
+        continue-on-error: true
+        uses: slackapi/slack-github-action@v4
+        with:
+          method: chat.postMessage
+          token: ${{ secrets.SLACK_BOT_TOKEN }}
+          errors: true
+          payload: |
+            channel: ${{ inputs.slack_channel_id }}
+            text: ":rotating_light: DAST scan found ${{ steps.report.outputs.high }} high-risk finding(s) on ${{ inputs.host }}"
+            blocks:
+              - type: section
+                text:
+                  type: mrkdwn
+                  text: "*DAST scan: ${{ steps.report.outputs.high }} high-risk finding(s)* :rotating_light:\n*Host:* `${{ inputs.host }}`\n*<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run and download findings>*"
