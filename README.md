@@ -65,13 +65,13 @@ The trigger, permissions and concurrency stay in the caller. A called workflow c
 
 Callers pass `secrets: inherit`. Secrets come in two kinds:
 
-**Org-wide.** The workflow reads these by fixed name, and callers never mention them. Define them once as organization secrets. A repo secret with the same name also works and takes precedence.
+**Shared.** These have the same value in every repo, and we provide the values. Add them as repo secrets under exactly these names. The workflow reads them by name, so callers never mention them.
 
 | Secret | Required | Used for |
 |--------|----------|----------|
 | `HAWK_API_KEY` | Yes | StackHawk API key (scan + alert fetch) |
 | `DRATA_CCT_API_KEY` | No | Drata custom-connection key. The Drata step is skipped if it's missing |
-| `SLACK_BOT_TOKEN` | No | Slack bot token. The Slack step is skipped if it's missing |
+| `SLACK_BOT_TOKEN` | No | Slack bot token. The Slack step is skipped if it's missing. Use the shared bot or your own |
 
 **Repo-specific.** The caller names these through the `*_secret` inputs, and the workflow resolves them with `secrets[<name>]`. The names below are suggestions. If a repo already has a suitable user under other names, pass those names instead (the nomanbase web repos reuse their `E2E_*` user this way).
 
@@ -131,7 +131,7 @@ When `waf_bypass` is off, the header is still sent, but with a placeholder value
 1. Create a StackHawk application for the app, and store its id as the `STACKHAWK_APP_ID` repo secret.
 2. Make sure a scan user exists on staging, and store `DAST_USERNAME`, `DAST_PASSWORD` and `DAST_CLIENT_SLUG`.
 3. Enable `enable_dast_scan_bypass` for the stage in the infra repo. Then either copy the SSM value into a `DAST_SCAN_KEY` secret, or give the repo an OIDC role (`AWS_ROLE_TO_ASSUME_STG`) that can read `/<app>-stg/dast/scan-key`.
-4. Check that the org secrets `HAWK_API_KEY`, `DRATA_CCT_API_KEY` and `SLACK_BOT_TOKEN` are shared with the repo.
+4. Add the shared secrets `HAWK_API_KEY` and `DRATA_CCT_API_KEY` (plus `SLACK_BOT_TOKEN` for alerts) as repo secrets.
 5. Copy [`examples/stackhawk.yml`](examples/stackhawk.yml) to the repo root. Set the cookie name and host, and take the seed paths from `config/routes.rb`.
 6. Copy [`examples/caller.yml`](examples/caller.yml) to `.github/workflows/dast.yml`, then run it once from the Actions tab.
 

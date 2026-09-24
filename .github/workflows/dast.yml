@@ -3,9 +3,10 @@ name: dast
 # Reusable authenticated DAST scan with HawkScan. Callers keep the trigger,
 # permissions, concurrency and their own stackhawk.yml; see README.md.
 #
-# Secrets: callers pass `secrets: inherit`. Org-wide secrets are read by fixed
-# name (HAWK_API_KEY, DRATA_CCT_API_KEY, SLACK_BOT_TOKEN); repo-specific ones are
-# named by the caller through the *_secret inputs and looked up dynamically.
+# Secrets: callers pass `secrets: inherit`. Shared secrets (same value in every
+# repo) are read by fixed name: HAWK_API_KEY, DRATA_CCT_API_KEY, SLACK_BOT_TOKEN.
+# Repo-specific ones are named by the caller through the *_secret inputs and
+# looked up dynamically.
 on:
   workflow_call:
     inputs:

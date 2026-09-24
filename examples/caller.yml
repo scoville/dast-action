@@ -30,7 +30,7 @@ concurrency:
 jobs:
   scan:
     uses: scoville/dast-action/.github/workflows/dast.yml@v1
-    # Org secrets read by fixed name: HAWK_API_KEY, DRATA_CCT_API_KEY, SLACK_BOT_TOKEN.
+    # Shared secrets read by fixed name: HAWK_API_KEY, DRATA_CCT_API_KEY, SLACK_BOT_TOKEN.
     secrets: inherit
     with:
       app_name: <app>
