@@ -41,7 +41,7 @@ jobs:
       # ...or SSM via the OIDC role in the AWS_ROLE_TO_ASSUME_STG secret.
       waf_key_ssm_parameter: /<app>-stg/dast/scan-key
       stackhawk_app_id_secret: STACKHAWK_APP_ID
-      scan_username_secret: E2E_USERNAME
-      scan_password_secret: E2E_PASSWORD
-      client_slug_secret: E2E_CLIENT_SLUG
+      scan_username_secret: DAST_USERNAME
+      scan_password_secret: DAST_PASSWORD
+      client_slug_secret: DAST_CLIENT_SLUG
       slack_channel_id: ${{ vars.DAST_SLACK_CHANNEL_ID }}

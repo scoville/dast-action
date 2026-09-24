@@ -53,9 +53,9 @@ jobs:
       waf_bypass: ${{ github.event_name != 'workflow_dispatch' || inputs.waf_bypass }}
       waf_key_ssm_parameter: /noman-stg/dast/scan-key
       stackhawk_app_id_secret: STACKHAWK_APP_ID
-      scan_username_secret: E2E_USERNAME
-      scan_password_secret: E2E_PASSWORD
-      client_slug_secret: E2E_CLIENT_SLUG
+      scan_username_secret: DAST_USERNAME
+      scan_password_secret: DAST_PASSWORD
+      client_slug_secret: DAST_CLIENT_SLUG
       slack_channel_id: ${{ vars.DAST_SLACK_CHANNEL_ID || 'C09LMU51P35' }}
 ```
 
@@ -73,14 +73,14 @@ Callers pass `secrets: inherit`. Secrets come in two kinds:
 | `DRATA_CCT_API_KEY` | No | Drata custom-connection key. The Drata step is skipped if it's missing |
 | `SLACK_BOT_TOKEN` | No | Slack bot token. The Slack step is skipped if it's missing |
 
-**Repo-specific.** The caller names these through the `*_secret` inputs, and the workflow resolves them with `secrets[<name>]`:
+**Repo-specific.** The caller names these through the `*_secret` inputs, and the workflow resolves them with `secrets[<name>]`. The names below are suggestions. If a repo already has a suitable user under other names, pass those names instead (the nomanbase web repos reuse their `E2E_*` user this way).
 
 | Input | Typical secret | Used for |
 |-------|----------------|----------|
 | `stackhawk_app_id_secret` | `STACKHAWK_APP_ID` | StackHawk application id |
-| `scan_username_secret` | `E2E_USERNAME` | Scan user login |
-| `scan_password_secret` | `E2E_PASSWORD` | Scan user password |
-| `client_slug_secret` | `E2E_CLIENT_SLUG` | Tenant slug. The sign-in page is `/users/sign_in?client_slug=<slug>` |
+| `scan_username_secret` | `DAST_USERNAME` | Scan user login |
+| `scan_password_secret` | `DAST_PASSWORD` | Scan user password |
+| `client_slug_secret` | `DAST_CLIENT_SLUG` | Tenant slug. The sign-in page is `/users/sign_in?client_slug=<slug>` |
 | `waf_scan_key_secret` | `DAST_SCAN_KEY` | WAF bypass key (direct source) |
 | `aws_role_secret` | `AWS_ROLE_TO_ASSUME_STG` | IAM role that reads the SSM key (SSM source) |
 
@@ -129,7 +129,7 @@ When `waf_bypass` is off, the header is still sent, but with a placeholder value
 ## Adding a new repo
 
 1. Create a StackHawk application for the app, and store its id as the `STACKHAWK_APP_ID` repo secret.
-2. Make sure a scan user exists on staging, and store `E2E_USERNAME`, `E2E_PASSWORD` and `E2E_CLIENT_SLUG`.
+2. Make sure a scan user exists on staging, and store `DAST_USERNAME`, `DAST_PASSWORD` and `DAST_CLIENT_SLUG`.
 3. Enable `enable_dast_scan_bypass` for the stage in the infra repo. Then either copy the SSM value into a `DAST_SCAN_KEY` secret, or give the repo an OIDC role (`AWS_ROLE_TO_ASSUME_STG`) that can read `/<app>-stg/dast/scan-key`.
 4. Check that the org secrets `HAWK_API_KEY`, `DRATA_CCT_API_KEY` and `SLACK_BOT_TOKEN` are shared with the repo.
 5. Copy [`examples/stackhawk.yml`](examples/stackhawk.yml) to the repo root. Set the cookie name and host, and take the seed paths from `config/routes.rb`.
