@@ -30,18 +30,22 @@ concurrency:
 jobs:
   scan:
     uses: scoville/dast-action/.github/workflows/dast.yml@v1
-    # Shared secrets read by fixed name: HAWK_API_KEY, DRATA_CCT_API_KEY, SLACK_BOT_TOKEN.
-    secrets: inherit
     with:
       app_name: <app>
       host: ${{ inputs.host || '<stg.example.jp>' }}
       waf_bypass: ${{ github.event_name != 'workflow_dispatch' || inputs.waf_bypass }}
-      # WAF key: either a repo secret...
-      # waf_scan_key_secret: DAST_SCAN_KEY
-      # ...or SSM via the OIDC role in the AWS_ROLE_TO_ASSUME_STG secret.
+      # Read the WAF key from SSM (needs AWS_ROLE_TO_ASSUME below)...
       waf_key_ssm_parameter: /<app>-stg/dast/scan-key
-      stackhawk_app_id_secret: STACKHAWK_APP_ID
-      scan_username_secret: DAST_USERNAME
-      scan_password_secret: DAST_PASSWORD
-      client_slug_secret: DAST_CLIENT_SLUG
       slack_channel_id: ${{ vars.DAST_SLACK_CHANNEL_ID }}
+    # Only these secrets are handed to the shared workflow.
+    secrets:
+      HAWK_API_KEY: ${{ secrets.HAWK_API_KEY }}
+      DRATA_API_KEY: ${{ secrets.DRATA_CCT_API_KEY }}
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      STACKHAWK_APP_ID: ${{ secrets.STACKHAWK_APP_ID }}
+      SCAN_USERNAME: ${{ secrets.DAST_USERNAME }}
+      SCAN_PASSWORD: ${{ secrets.DAST_PASSWORD }}
+      CLIENT_SLUG: ${{ secrets.DAST_CLIENT_SLUG }}
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME_STG }}
+      # ...or pass the key directly instead:
+      # WAF_SCAN_KEY: ${{ secrets.DAST_SCAN_KEY }}
