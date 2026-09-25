@@ -19,7 +19,7 @@ on:
 
 permissions:
   contents: read
-  # Only needed when the WAF key is read from SSM (waf_key_ssm_parameter).
+  # Only needed when the WAF key is read from SSM (waf-key-ssm-parameter).
   id-token: write
 
 concurrency:
@@ -29,23 +29,25 @@ concurrency:
 
 jobs:
   scan:
-    uses: scoville/dast-action/.github/workflows/dast.yml@v1
-    with:
-      app_name: <app>
-      host: ${{ inputs.host || '<stg.example.jp>' }}
-      waf_bypass: ${{ github.event_name != 'workflow_dispatch' || inputs.waf_bypass }}
-      # Read the WAF key from SSM (needs AWS_ROLE_TO_ASSUME below)...
-      waf_key_ssm_parameter: /<app>-stg/dast/scan-key
-      slack_channel_id: ${{ vars.DAST_SLACK_CHANNEL_ID }}
-    # Only these secrets are handed to the shared workflow.
-    secrets:
-      HAWK_API_KEY: ${{ secrets.HAWK_API_KEY }}
-      DRATA_API_KEY: ${{ secrets.DRATA_CCT_API_KEY }}
-      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
-      STACKHAWK_APP_ID: ${{ secrets.STACKHAWK_APP_ID }}
-      SCAN_USERNAME: ${{ secrets.DAST_USERNAME }}
-      SCAN_PASSWORD: ${{ secrets.DAST_PASSWORD }}
-      CLIENT_SLUG: ${{ secrets.DAST_CLIENT_SLUG }}
-      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME_STG }}
-      # ...or pass the key directly instead:
-      # WAF_SCAN_KEY: ${{ secrets.DAST_SCAN_KEY }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: DAST scan
+        uses: scoville/dast-action@v1
+        with:
+          app-name: <app>
+          host: ${{ inputs.host || '<stg.example.jp>' }}
+          waf-bypass: ${{ github.event_name != 'workflow_dispatch' || inputs.waf_bypass }}
+          # WAF key from SSM via OIDC...
+          waf-key-ssm-parameter: /<app>-stg/dast/scan-key
+          aws-role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME_STG }}
+          # ...or pass it directly instead (then id-token: write is not needed):
+          # waf-scan-key: ${{ secrets.DAST_SCAN_KEY }}
+          stackhawk-api-key: ${{ secrets.HAWK_API_KEY }}
+          stackhawk-app-id: ${{ secrets.STACKHAWK_APP_ID }}
+          scan-username: ${{ secrets.DAST_USERNAME }}
+          scan-password: ${{ secrets.DAST_PASSWORD }}
+          client-slug: ${{ secrets.DAST_CLIENT_SLUG }}
+          drata-api-key: ${{ secrets.DRATA_CCT_API_KEY }}
+          slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
+          slack-channel-id: ${{ vars.DAST_SLACK_CHANNEL_ID }}

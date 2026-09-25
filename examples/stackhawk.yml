@@ -10,7 +10,7 @@ app:
   authentication:
     usernamePassword:
       type: FORM
-      # The action appends ?client_slug=<tenant> when client_slug_secret is set.
+      # The action appends ?client_slug=<tenant> when the client-slug input is set.
       loginPath: ${LOGIN_PATH:/users/sign_in}
       usernameField: user[username]
       passwordField: user[password]
