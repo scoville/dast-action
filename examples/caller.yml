@@ -1,0 +1,53 @@
+# Copy to .github/workflows/dast.yml in the app repo and replace the <...> values.
+name: dast
+
+# Weekly authenticated DAST scan of staging with HawkScan (scoville/dast-action).
+# Scan tuning (excluded assets, seeded routes, auth) lives in stackhawk.yml.
+on:
+  schedule:
+    # 03:00 JST Monday (18:00 UTC Sunday)
+    - cron: '0 18 * * 0'
+  workflow_dispatch:
+    inputs:
+      host:
+        description: 'Tenant host to scan (bare hostname, no scheme)'
+        default: '<stg.example.jp>'
+      waf_bypass:
+        description: 'Send the WAF bypass header so payloads reach the app. Off = scan as an outsider sees it.'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  # Only needed when the WAF key is read from SSM (waf-key-ssm-parameter).
+  id-token: write
+
+concurrency:
+  # One scan per app/env at a time; a queued run would clash on the platform.
+  group: dast-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: DAST scan
+        uses: scoville/dast-action@v1
+        with:
+          app-name: <app>
+          host: ${{ inputs.host || '<stg.example.jp>' }}
+          waf-bypass: ${{ github.event_name != 'workflow_dispatch' || inputs.waf_bypass }}
+          # WAF key from SSM via OIDC...
+          waf-key-ssm-parameter: /<app>-stg/dast/scan-key
+          aws-role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME_STG }}
+          # ...or pass it directly instead (then id-token: write is not needed):
+          # waf-scan-key: ${{ secrets.DAST_SCAN_KEY }}
+          stackhawk-api-key: ${{ secrets.HAWK_API_KEY }}
+          stackhawk-app-id: ${{ secrets.STACKHAWK_APP_ID }}
+          scan-username: ${{ secrets.DAST_USERNAME }}
+          scan-password: ${{ secrets.DAST_PASSWORD }}
+          client-slug: ${{ secrets.DAST_CLIENT_SLUG }}
+          drata-api-key: ${{ secrets.DRATA_CCT_API_KEY }}
+          slack-bot-token: ${{ secrets.SLACK_BOT_TOKEN }}
+          slack-channel-id: ${{ vars.DAST_SLACK_CHANNEL_ID }}
