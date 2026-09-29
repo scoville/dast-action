@@ -133,4 +133,8 @@ Callers pin `@v1`. Every release gets a `vX.Y.Z` tag, and the `v1` tag is moved 
 git tag v1.0.1 && git tag -f v1 && git push origin v1.0.1 && git push -f origin v1
 ```
 
-This repo is private. Settings → Actions → General → Access is set to "Accessible from repositories in the scoville organization" so other repos can use the action.
+This repo is public, so any repository can use the action without an Actions access setting.
+
+## Contributing
+
+This action is maintained by Scoville for its own apps. We don't accept pull requests from outside the scoville organization, and workflows on outside pull requests only run after a maintainer approves them.
