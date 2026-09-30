@@ -38,6 +38,16 @@ app:
     - /robots\.txt
     - /sitemap\.xml
 
+  # Keeps the WAF bypass key out of the alert evidence uploaded to StackHawk
+  # and out of the scan logs. The header is on every request, so without this
+  # the key is readable by anyone with StackHawk access. `values` also catches
+  # it if the app echoes it back in a response body.
+  redact:
+    headers:
+      - x-dast-scan-key
+    values:
+      - ${DAST_SCAN_KEY}
+
 hawk:
   spider:
     base: true

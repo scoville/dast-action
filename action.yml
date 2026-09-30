@@ -163,16 +163,21 @@ runs:
         echo "::add-mask::$KEY"
         echo "key=$KEY" >> "$GITHUB_OUTPUT"
 
+    # Pinned, with the hash held here rather than read from StackHawk's
+    # manifest: the binary runs with every secret this action receives, so a
+    # tampered manifest must not be able to swap it. To upgrade, take the
+    # linux-x64 url and sha256 for the new version from
+    # https://download.stackhawk.com/hawkdocs/hawk.manifest.json.
     - name: Install hawk
       shell: bash
+      env:
+        HAWK_VERSION: 6.5.0
+        HAWK_SHA256: 2519b1097e44f5f19710b6859d230e1d1cba8fa16cf3a37c6fb3f539b4236eae
       run: |
         set -euo pipefail
         cd "$RUNNER_TEMP"
-        MANIFEST=$(curl -fsSL https://download.stackhawk.com/hawkdocs/hawk.manifest.json)
-        URL=$(jq -r '.latest.assets[] | select(.asset.group=="linux-x64") | .url' <<<"$MANIFEST")
-        SHA=$(jq -r '.latest.assets[] | select(.asset.group=="linux-x64") | .sha256' <<<"$MANIFEST")
-        curl -fsSL -o hawk "$URL"
-        echo "$SHA  hawk" | sha256sum -c -
+        curl -fsSL -o hawk "https://download.stackhawk.com/hawk/$HAWK_VERSION/linux-x64/hawk"
+        echo "$HAWK_SHA256  hawk" | sha256sum -c -
         sudo install -m 0755 hawk /usr/local/bin/hawk
         hawk version
 

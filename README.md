@@ -4,7 +4,7 @@ A composite GitHub Action that runs an authenticated [HawkScan](https://docs.sta
 
 ## Features
 
-- Installs the latest `hawk` CLI, verified against the manifest's SHA-256
+- Installs a pinned `hawk` CLI version, verified against a SHA-256 kept in `action.yml`
 - Signs in as a scan user (Devise form login, optional tenant `client_slug`)
 - Sends a WAF bypass header so payloads reach the app. The key is passed in directly or read from SSM
 - Writes the findings as a table on the run page, with the offending paths behind `<details>`
@@ -116,6 +116,8 @@ The staging WAF lets a request skip its managed rule groups when it carries `x-d
 
 When `waf-bypass` is off, the header is still sent, but with a placeholder value that can't match the rule.
 
+The header goes out on every scan request, so `stackhawk.yml` must list it under `app.redact` (see [`examples/stackhawk.yml`](examples/stackhawk.yml)). Without that, the key is stored in the alert evidence on StackHawk and readable by anyone with StackHawk access.
+
 ## Adding a new repo
 
 1. Create a StackHawk application for the app, and store its id as the `STACKHAWK_APP_ID` repo secret.
@@ -124,6 +126,10 @@ When `waf-bypass` is off, the header is still sent, but with a placeholder value
 4. Add the shared `HAWK_API_KEY` and `DRATA_CCT_API_KEY` values we provide (plus `SLACK_BOT_TOKEN` for alerts) as repo secrets.
 5. Copy [`examples/stackhawk.yml`](examples/stackhawk.yml) to the repo root. Set the cookie name and host, and take the seed paths from `config/routes.rb`.
 6. Copy [`examples/caller.yml`](examples/caller.yml) to `.github/workflows/dast.yml` and fill in the inputs, then run it once from the Actions tab.
+
+## Upgrading hawk
+
+`hawk` is pinned in the `Install hawk` step so that a compromised StackHawk manifest can't swap the binary. To upgrade, copy the `linux-x64` `version` and `sha256` from the [manifest](https://download.stackhawk.com/hawkdocs/hawk.manifest.json) into `HAWK_VERSION` and `HAWK_SHA256`, then cut a release.
 
 ## Versioning
 
