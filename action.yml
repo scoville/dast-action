@@ -122,7 +122,7 @@ runs:
         exit $missing
 
     # Checks out the caller repo, which holds stackhawk.yml.
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
     # Picks where the WAF bypass key comes from: waf-scan-key if set,
     # otherwise SSM if a parameter is configured, otherwise scan WAF-on.
@@ -143,7 +143,7 @@ runs:
           echo "source=none" >> "$GITHUB_OUTPUT"
         fi
 
-    - uses: aws-actions/configure-aws-credentials@v6
+    - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
       if: steps.wafsrc.outputs.source == 'ssm'
       with:
         role-to-assume: ${{ inputs.aws-role-to-assume }}
@@ -325,7 +325,7 @@ runs:
 
     - name: Upload findings
       if: always() && steps.report.conclusion == 'success'
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: dast-findings
         path: ${{ runner.temp }}/dast/
@@ -341,7 +341,7 @@ runs:
       # A Slack outage must not change the scan's reported outcome; the step's
       # own red marker (with errors: true) still surfaces a misconfig.
       continue-on-error: true
-      uses: slackapi/slack-github-action@v4
+      uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
       with:
         method: chat.postMessage
         token: ${{ inputs.slack-bot-token }}
