@@ -49,7 +49,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: DAST scan
-        uses: scoville/dast-action@v1
+        uses: scoville/dast-action@v1 # pin to the full commit SHA of the release if your repo requires hash-pinned actions
         with:
           app-name: noman
           host: ${{ inputs.host || 'stg.example.jp' }}
