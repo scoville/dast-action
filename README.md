@@ -12,6 +12,7 @@ A composite GitHub Action that runs an authenticated [HawkScan](https://docs.sta
 - Posts a DCF-18 (Vulnerability Scans) evidence record to the Drata "HawkScan DAST" custom connection
 - Pings Slack when the scan finds High-risk issues
 - Fails the job when findings cross the `stackhawk.yml` threshold (hawk exit 42) or the scan itself fails
+- Skips the summary, artifact, Drata record and Slack ping when the scan itself fails, so a broken scan never reports as clean
 
 Each app keeps its own `stackhawk.yml` (seed paths, cookie name, excludes), because those are app-specific.
 
@@ -102,7 +103,7 @@ GitHub doesn't enforce `required` for actions, so the first step fails with a cl
 
 | Output | Description |
 |--------|-------------|
-| `high` | Number of High-risk findings. Empty if the alert fetch failed |
+| `high` | Number of High-risk findings. Empty if the scan or the alert fetch failed |
 | `medium` | Number of Medium-risk findings |
 | `low` | Number of Low-risk findings |
 

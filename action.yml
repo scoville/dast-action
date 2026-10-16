@@ -86,7 +86,7 @@ inputs:
 
 outputs:
   high:
-    description: 'High-risk finding count (empty if the alert fetch failed)'
+    description: 'High-risk finding count (empty if the scan or the alert fetch failed)'
     value: ${{ steps.report.outputs.high }}
   medium:
     description: 'Medium-risk finding count'
@@ -210,13 +210,19 @@ runs:
           LOGIN_PATH="$LOGIN_PATH${SEP}client_slug=$CLIENT_SLUG"
         fi
         export LOGIN_PATH
-        hawk --no-color scan "$CONFIG_FILE"
+        RC=0
+        hawk --no-color scan "$CONFIG_FILE" || RC=$?
+        case "$RC" in
+          0|42) echo "completed=true" >> "$GITHUB_OUTPUT" ;;
+        esac
+        exit "$RC"
 
     # Our StackHawk tier does not support the /reports endpoint, so walk the
-    # per-scan alert endpoints instead.
+    # per-scan alert endpoints instead. Skipped unless the scan finished, so a
+    # broken scan never reports as clean.
     - name: Fetch scan alerts
       id: report
-      if: always() && steps.scan.conclusion != 'skipped'
+      if: always() && steps.scan.outputs.completed == 'true'
       shell: bash
       env:
         HAWK_API_KEY: ${{ inputs.stackhawk-api-key }}
@@ -337,7 +343,7 @@ runs:
         retention-days: ${{ inputs.artifact-retention-days }}
 
     # Only high-risk findings are worth interrupting the channel for; the
-    # artifact covers everything else. An empty count means the fetch failed.
+    # artifact covers everything else. An empty count means the scan or the fetch failed.
     - name: Slack notification
       if: >-
         always()
