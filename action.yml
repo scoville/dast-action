@@ -211,22 +211,25 @@ runs:
         fi
         export LOGIN_PATH
         RC=0
-        hawk --no-color scan "$CONFIG_FILE" || RC=$?
+        hawk --no-color scan "$CONFIG_FILE" | tee "$RUNNER_TEMP/hawk.log" || RC=$?
+        # Hawk prints the scan id before it can abort, so only hand it on when
+        # the scan finished.
         case "$RC" in
-          0|42) echo "completed=true" >> "$GITHUB_OUTPUT" ;;
+          0|42) echo "scan-id=$(sed -n 's/^\* scan id: *//p' "$RUNNER_TEMP/hawk.log" | head -1)" >> "$GITHUB_OUTPUT" ;;
         esac
         exit "$RC"
 
     # Our StackHawk tier does not support the /reports endpoint, so walk the
     # per-scan alert endpoints instead. Skipped unless the scan finished, so a
-    # broken scan never reports as clean.
+    # broken scan never reports as clean. Uses this run's scan rather than the
+    # app's latest, which another environment or run could have replaced.
     - name: Fetch scan alerts
       id: report
-      if: always() && steps.scan.outputs.completed == 'true'
+      if: always() && steps.scan.outputs.scan-id != ''
       shell: bash
       env:
         HAWK_API_KEY: ${{ inputs.stackhawk-api-key }}
-        APP_ID: ${{ inputs.stackhawk-app-id }}
+        SCAN: ${{ steps.scan.outputs.scan-id }}
       run: |
         set -euo pipefail
         OUT="$RUNNER_TEMP/dast"
@@ -234,9 +237,6 @@ runs:
         JWT=$(curl -fsS -H "X-ApiKey: $HAWK_API_KEY" "$API/auth/login" | jq -r .token)
         echo "::add-mask::$JWT"
         AUTH="Authorization: Bearer $JWT"
-        ORG=$(curl -fsS -H "$AUTH" "$API/user" | jq -r '.user.external.organizations[0].organization.id')
-        SCAN=$(curl -fsS -H "$AUTH" "$API/scan/$ORG?appIds=$APP_ID&pageSize=1&sortDir=desc" \
-          | jq -r '.applicationScanResults[0].scan.id')
         mkdir -p "$OUT"
         curl -fsS -H "$AUTH" "$API/scan/$SCAN/alerts?pageSize=100" -o "$OUT/alerts.json"
         # alerts.json counts the offending paths but does not name them, so
