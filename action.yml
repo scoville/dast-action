@@ -88,7 +88,7 @@ inputs:
 
 outputs:
   high:
-    description: 'High-risk finding count (empty if the alert fetch failed)'
+    description: 'High-risk finding count (empty if the scan or the alert fetch failed)'
     value: ${{ steps.report.outputs.high }}
   medium:
     description: 'Medium-risk finding count'
@@ -236,17 +236,26 @@ runs:
           LOGIN_PATH="$LOGIN_PATH${SEP}client_slug=$CLIENT_SLUG"
         fi
         export LOGIN_PATH
-        hawk --no-color scan "$CONFIG_FILE"
+        RC=0
+        hawk --no-color scan "$CONFIG_FILE" | tee "$RUNNER_TEMP/hawk.log" || RC=$?
+        # Hawk prints the scan id before it can abort, so only hand it on when
+        # the scan finished.
+        case "$RC" in
+          0|42) echo "scan-id=$(sed -n 's/^\* scan id: *//p' "$RUNNER_TEMP/hawk.log" | head -1)" >> "$GITHUB_OUTPUT" ;;
+        esac
+        exit "$RC"
 
     # Our StackHawk tier does not support the /reports endpoint, so walk the
-    # per-scan alert endpoints instead.
+    # per-scan alert endpoints instead. Skipped unless the scan finished, so a
+    # broken scan never reports as clean. Uses this run's scan rather than the
+    # app's latest, which another environment or run could have replaced.
     - name: Fetch scan alerts
       id: report
-      if: always() && steps.scan.conclusion != 'skipped'
+      if: always() && steps.scan.outputs.scan-id != ''
       shell: bash
       env:
         HAWK_API_KEY: ${{ inputs.stackhawk-api-key }}
-        APP_ID: ${{ inputs.stackhawk-app-id }}
+        SCAN: ${{ steps.scan.outputs.scan-id }}
       run: |
         set -euo pipefail
         OUT="$RUNNER_TEMP/dast"
@@ -254,9 +263,6 @@ runs:
         JWT=$(curl -fsS -H "X-ApiKey: $HAWK_API_KEY" "$API/auth/login" | jq -r .token)
         echo "::add-mask::$JWT"
         AUTH="Authorization: Bearer $JWT"
-        ORG=$(curl -fsS -H "$AUTH" "$API/user" | jq -r '.user.external.organizations[0].organization.id')
-        SCAN=$(curl -fsS -H "$AUTH" "$API/scan/$ORG?appIds=$APP_ID&pageSize=1&sortDir=desc" \
-          | jq -r '.applicationScanResults[0].scan.id')
         mkdir -p "$OUT"
         curl -fsS -H "$AUTH" "$API/scan/$SCAN/alerts?pageSize=100" -o "$OUT/alerts.json"
         # alerts.json counts the offending paths but does not name them, so
@@ -363,7 +369,7 @@ runs:
         retention-days: ${{ inputs.artifact-retention-days }}
 
     # Only high-risk findings are worth interrupting the channel for; the
-    # artifact covers everything else. An empty count means the fetch failed.
+    # artifact covers everything else. An empty count means the scan or the fetch failed.
     - name: Slack notification
       if: >-
         always()
