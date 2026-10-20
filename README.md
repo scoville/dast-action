@@ -5,7 +5,7 @@ A composite GitHub Action that runs an authenticated [HawkScan](https://docs.sta
 ## Features
 
 - Installs a pinned `hawk` CLI version, verified against a SHA-256 kept in `action.yml`
-- Signs in as a scan user (Devise form login, optional tenant `client_slug`)
+- Signs in as a scan user (Devise form login, optional tenant `client_slug`), or scans logged out for apps without a password login
 - Sends a WAF bypass header so payloads reach the app. The key is passed in directly or read from SSM
 - Writes the findings as a table on the run page, with the offending paths behind `<details>`
 - Uploads the raw alert JSON as the `dast-findings` artifact (kept 90 days)
@@ -78,8 +78,8 @@ Secrets are passed as ordinary inputs. They stay explicit, since the action only
 | `host` | Yes | - | | Host to scan, as a bare hostname |
 | `stackhawk-api-key` | Yes | - | `HAWK_API_KEY` (shared value, provided by us) | StackHawk API key (scan + alert fetch) |
 | `stackhawk-app-id` | Yes | - | `STACKHAWK_APP_ID` | StackHawk application id |
-| `scan-username` | Yes | - | `DAST_USERNAME` | Scan user login |
-| `scan-password` | Yes | - | `DAST_PASSWORD` | Scan user password |
+| `scan-username` | No | `''` | `DAST_USERNAME` | Scan user login. Required when `stackhawk.yml` has an `authentication` block; leave empty for an [unauthenticated scan](#unauthenticated-scans) |
+| `scan-password` | No | `''` | `DAST_PASSWORD` | Scan user password. Same rule as `scan-username` |
 | `client-slug` | No | `''` | `DAST_CLIENT_SLUG` | Tenant slug. The sign-in page becomes `<login-path>?client_slug=<slug>` |
 | `app-env` | No | `Staging` | | StackHawk environment name |
 | `config-file` | No | `stackhawk.yml` | | HawkScan config in the caller repo |
@@ -96,7 +96,16 @@ Secrets are passed as ordinary inputs. They stay explicit, since the action only
 | `slack-channel-id` | No | `''` | | Slack channel for High-finding alerts. Slack is skipped when it's empty |
 | `artifact-retention-days` | No | `90` | | Retention of the `dast-findings` artifact |
 
-GitHub doesn't enforce `required` for actions, so the first step fails with a clear error when a required input is empty. That usually means the secret is missing from the repo.
+GitHub doesn't enforce `required` for actions, so the first step fails with a clear error when a required input is empty. That usually means the secret is missing from the repo. The same goes for the scan credentials when `stackhawk.yml` has an `authentication` block, or when only one of the two is set.
+
+## Unauthenticated scans
+
+For an app with no password login (public sites, LINE/LIFF or SSO-only logins), scan it as an outsider:
+
+1. Remove the `authentication` block from `stackhawk.yml`, and exclude the paths that need a session.
+2. Leave `scan-username` and `scan-password` out of the caller, or pass empty values.
+
+The scan then only covers what a logged-out visitor can reach.
 
 ## Outputs
 
@@ -121,7 +130,7 @@ The header goes out on every scan request, so `stackhawk.yml` must list it under
 ## Adding a new repo
 
 1. Create a StackHawk application for the app, and store its id as the `STACKHAWK_APP_ID` repo secret.
-2. Make sure a scan user exists on staging, and store `DAST_USERNAME`, `DAST_PASSWORD` and `DAST_CLIENT_SLUG`.
+2. Make sure a scan user exists on staging, and store `DAST_USERNAME`, `DAST_PASSWORD` and `DAST_CLIENT_SLUG`. Skip this if the app has no password login (see [Unauthenticated scans](#unauthenticated-scans)).
 3. Enable `enable_dast_scan_bypass` for the stage in the infra repo. Then either copy the SSM value into a `DAST_SCAN_KEY` secret, or give the repo an OIDC role (`AWS_ROLE_TO_ASSUME_STG`) that can read `/<app>-stg/dast/scan-key`.
 4. Add the shared `HAWK_API_KEY` and `DRATA_CCT_API_KEY` values we provide (plus `SLACK_BOT_TOKEN` for alerts) as repo secrets.
 5. Copy [`examples/stackhawk.yml`](examples/stackhawk.yml) to the repo root. Set the cookie name and host, and take the seed paths from `config/routes.rb`.
