@@ -1,5 +1,5 @@
 name: DAST scan
-description: Authenticated HawkScan DAST scan of a staging host, reported to the run summary, an artifact, Drata and Slack
+description: HawkScan DAST scan of a staging host, authenticated or not, reported to the run summary, an artifact, Drata and Slack
 
 # The caller keeps the trigger, permissions (contents: read, plus
 # id-token: write for the SSM key source), concurrency and its own
@@ -18,11 +18,13 @@ inputs:
     description: 'StackHawk application id'
     required: true
   scan-username:
-    description: 'Scan user login'
-    required: true
+    description: 'Scan user login. Leave empty for an unauthenticated scan (no authentication block in config-file)'
+    required: false
+    default: ''
   scan-password:
-    description: 'Scan user password'
-    required: true
+    description: 'Scan user password. Leave empty for an unauthenticated scan (no authentication block in config-file)'
+    required: false
+    default: ''
   client-slug:
     description: 'Tenant client_slug appended to login-path as ?client_slug=<value>'
     required: false
@@ -107,12 +109,9 @@ runs:
         HOST: ${{ inputs.host }}
         API_KEY: ${{ inputs.stackhawk-api-key }}
         APP_ID: ${{ inputs.stackhawk-app-id }}
-        SCAN_USERNAME: ${{ inputs.scan-username }}
-        SCAN_PASSWORD: ${{ inputs.scan-password }}
       run: |
         missing=0
-        for pair in APP_NAME:app-name HOST:host API_KEY:stackhawk-api-key APP_ID:stackhawk-app-id \
-                    SCAN_USERNAME:scan-username SCAN_PASSWORD:scan-password; do
+        for pair in APP_NAME:app-name HOST:host API_KEY:stackhawk-api-key APP_ID:stackhawk-app-id; do
           var=${pair%%:*}
           if [ -z "${!var}" ]; then
             echo "::error::Input '${pair#*:}' is required but empty (is the secret set in this repo?)"
@@ -123,6 +122,33 @@ runs:
 
     # Checks out the caller repo, which holds stackhawk.yml.
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    # A config that logs in references ${SCAN_USERNAME} / ${SCAN_PASSWORD},
+    # and hawk rejects a set-but-empty var with "Missing property
+    # replacement", so catch missing credentials here with a clearer error.
+    - name: Check scan credentials
+      shell: bash
+      env:
+        CONFIG_FILE: ${{ inputs.config-file }}
+        SCAN_USERNAME: ${{ inputs.scan-username }}
+        SCAN_PASSWORD: ${{ inputs.scan-password }}
+      run: |
+        if [ ! -f "$CONFIG_FILE" ]; then
+          echo "::error::Config file '$CONFIG_FILE' not found in the caller repo."
+          exit 1
+        fi
+        if { [ -n "$SCAN_USERNAME" ] && [ -z "$SCAN_PASSWORD" ]; } || { [ -z "$SCAN_USERNAME" ] && [ -n "$SCAN_PASSWORD" ]; }; then
+          echo "::error::Set both scan-username and scan-password, or neither for an unauthenticated scan."
+          exit 1
+        fi
+        if ! grep -Eq -e '^[[:space:]]+authentication[[:space:]]*:' -- "$CONFIG_FILE"; then
+          echo "Unauthenticated scan: no authentication block in $CONFIG_FILE."
+        elif [ -z "$SCAN_USERNAME" ]; then
+          echo "::error::$CONFIG_FILE has an authentication block but scan-username / scan-password are empty (is the secret set in this repo?). Set them, or remove the block for an unauthenticated scan."
+          exit 1
+        else
+          echo "Authenticated scan."
+        fi
 
     # Picks where the WAF bypass key comes from: waf-scan-key if set,
     # otherwise SSM if a parameter is configured, otherwise scan WAF-on.
