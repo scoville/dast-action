@@ -382,19 +382,25 @@ runs:
         MEDIUM: ${{ steps.report.outputs.medium }}
         LOW: ${{ steps.report.outputs.low }}
       run: |
+        TH=${THRESHOLD,,}
+        case "$TH" in
+          high|medium|low) ;;
+          *) echo "::warning::Unknown slack-severity-threshold '$THRESHOLD'; defaulting to high."
+             TH=high ;;
+        esac
         parts=()
         total=0
         if [ "${HIGH:-0}" -gt 0 ]; then
           parts+=("$HIGH high")
           total=$((total + HIGH))
         fi
-        if [ "$THRESHOLD" = "Medium" ] || [ "$THRESHOLD" = "Low" ]; then
+        if [ "$TH" = "medium" ] || [ "$TH" = "low" ]; then
           if [ "${MEDIUM:-0}" -gt 0 ]; then
             parts+=("$MEDIUM medium")
             total=$((total + MEDIUM))
           fi
         fi
-        if [ "$THRESHOLD" = "Low" ]; then
+        if [ "$TH" = "low" ]; then
           if [ "${LOW:-0}" -gt 0 ]; then
             parts+=("$LOW low")
             total=$((total + LOW))
