@@ -10,7 +10,7 @@ A composite GitHub Action that runs an authenticated [HawkScan](https://docs.sta
 - Writes the findings as a table on the run page, with the offending paths behind `<details>`
 - Uploads the raw alert JSON as the `dast-findings` artifact (kept 90 days)
 - Posts a DCF-18 (Vulnerability Scans) evidence record to the Drata "HawkScan DAST" custom connection
-- Pings Slack when the scan finds High-risk issues
+- Pings Slack when the scan finds issues at or above the configured severity threshold (default: High)
 - Fails the job when findings cross the `stackhawk.yml` threshold (hawk exit 42) or the scan itself fails
 - Skips the summary, artifact, Drata record and Slack ping when the scan itself fails, so a broken scan never reports as clean
 
@@ -94,7 +94,8 @@ Secrets are passed as ordinary inputs. They stay explicit, since the action only
 | `drata-connection-id` | No | `20` | | Drata custom connection id |
 | `drata-resource-id` | No | `1` | | Drata custom connection resource id |
 | `slack-bot-token` | No | `''` | `SLACK_BOT_TOKEN` (shared bot, or your own) | Slack bot token. Slack is skipped when it's empty |
-| `slack-channel-id` | No | `''` | | Slack channel for High-finding alerts. Slack is skipped when it's empty |
+| `slack-channel-id` | No | `''` | | Slack channel for alerts. Slack is skipped when it's empty |
+| `slack-severity-threshold` | No | `High` | | Minimum severity that triggers a Slack notification (`High`, `Medium`, or `Low`) |
 | `artifact-retention-days` | No | `90` | | Retention of the `dast-findings` artifact |
 
 GitHub doesn't enforce `required` for actions, so the first step fails with a clear error when a required input is empty. That usually means the secret is missing from the repo. The same goes for the scan credentials when `stackhawk.yml` has an `authentication` block, or when only one of the two is set.

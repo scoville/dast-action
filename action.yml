@@ -81,6 +81,10 @@ inputs:
     description: 'Slack channel for high-risk alerts; Slack is skipped when empty'
     required: false
     default: ''
+  slack-severity-threshold:
+    description: 'Minimum severity that triggers a Slack notification (High, Medium, or Low)'
+    required: false
+    default: 'High'
   artifact-retention-days:
     description: 'Days to keep the dast-findings artifact'
     required: false
@@ -368,15 +372,48 @@ runs:
         path: ${{ runner.temp }}/dast/
         retention-days: ${{ inputs.artifact-retention-days }}
 
-    # Only high-risk findings are worth interrupting the channel for; the
-    # artifact covers everything else. An empty count means the scan or the fetch failed.
+    - name: Evaluate Slack threshold
+      id: slack-eval
+      if: always() && steps.report.conclusion == 'success' && inputs.slack-bot-token != '' && inputs.slack-channel-id != ''
+      shell: bash
+      env:
+        THRESHOLD: ${{ inputs.slack-severity-threshold }}
+        HIGH: ${{ steps.report.outputs.high }}
+        MEDIUM: ${{ steps.report.outputs.medium }}
+        LOW: ${{ steps.report.outputs.low }}
+      run: |
+        TH=${THRESHOLD,,}
+        case "$TH" in
+          high|medium|low) ;;
+          *) echo "::warning::Unknown slack-severity-threshold '$THRESHOLD'; defaulting to High."
+             TH=high ;;
+        esac
+        parts=()
+        total=0
+        if [ "${HIGH:-0}" -gt 0 ]; then
+          parts+=("$HIGH high")
+          total=$((total + HIGH))
+        fi
+        if [ "$TH" = "medium" ] || [ "$TH" = "low" ]; then
+          if [ "${MEDIUM:-0}" -gt 0 ]; then
+            parts+=("$MEDIUM medium")
+            total=$((total + MEDIUM))
+          fi
+        fi
+        if [ "$TH" = "low" ]; then
+          if [ "${LOW:-0}" -gt 0 ]; then
+            parts+=("$LOW low")
+            total=$((total + LOW))
+          fi
+        fi
+        if [ "$total" -gt 0 ]; then
+          summary=$(printf '%s, ' "${parts[@]}"); summary=${summary%, }
+          echo "notify=true" >> "$GITHUB_OUTPUT"
+          echo "summary=$summary" >> "$GITHUB_OUTPUT"
+        fi
+
     - name: Slack notification
-      if: >-
-        always()
-        && steps.report.outputs.high != '' && steps.report.outputs.high != '0'
-        && inputs.slack-bot-token != '' && inputs.slack-channel-id != ''
-      # A Slack outage must not change the scan's reported outcome; the step's
-      # own red marker (with errors: true) still surfaces a misconfig.
+      if: always() && steps.slack-eval.outputs.notify == 'true'
       continue-on-error: true
       uses: slackapi/slack-github-action@dcb1066f776dd043e64d0e8ba94ca15cc7e1875d # v4.0.0
       with:
@@ -385,9 +422,9 @@ runs:
         errors: true
         payload: |
           channel: ${{ inputs.slack-channel-id }}
-          text: ":rotating_light: DAST scan found ${{ steps.report.outputs.high }} high-risk finding(s) on ${{ inputs.host }}"
+          text: ":rotating_light: DAST scan found ${{ steps.slack-eval.outputs.summary }} finding(s) on ${{ inputs.host }}"
           blocks:
             - type: section
               text:
                 type: mrkdwn
-                text: "*DAST scan: ${{ steps.report.outputs.high }} high-risk finding(s)* :rotating_light:\n*Host:* `${{ inputs.host }}`\n*<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run and download findings>*"
+                text: "*DAST scan: ${{ steps.slack-eval.outputs.summary }} finding(s)* :rotating_light:\n*Host:* `${{ inputs.host }}`\n*<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View run and download findings>*"
