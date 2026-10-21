@@ -385,7 +385,7 @@ runs:
         TH=${THRESHOLD,,}
         case "$TH" in
           high|medium|low) ;;
-          *) echo "::warning::Unknown slack-severity-threshold '$THRESHOLD'; defaulting to high."
+          *) echo "::warning::Unknown slack-severity-threshold '$THRESHOLD'; defaulting to High."
              TH=high ;;
         esac
         parts=()
